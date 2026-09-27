@@ -1,0 +1,123 @@
+name: Package Linux DEB
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build Linux run ID
+        required: true
+        type: string
+        default: "36323121084"
+      build_sha:
+        description: Source commit SHA used by that build
+        required: true
+        type: string
+        default: "23ef57c582cbabacc0f18f06373356686b6f7949"
+  workflow_run:
+    workflows: ["Build Linux"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  package-deb:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    name: Package AyuGram DEB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BUILD_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.build_run_id }}
+      BUILD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.build_sha }}
+    steps:
+      - name: Check out matching package metadata
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+
+      - name: Download Linux build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AyuGram-Linux-${{ env.BUILD_SHA }}
+          run-id: ${{ env.BUILD_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/ayugram-build
+
+      - name: Install Debian packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+
+      - name: Assemble Debian package
+        env:
+          BUILD_SHA: ${{ env.BUILD_SHA }}
+          BUILD_RUN_ID: ${{ env.BUILD_RUN_ID }}
+        run: |
+          set -euo pipefail
+          build_root="$RUNNER_TEMP/ayugram-build"
+          binary="$(find "$build_root" -type f -name AyuGram -print -quit)"
+          test -n "$binary"
+          release_dir="$(dirname "$binary")"
+          package_root="$RUNNER_TEMP/ayugram-package"
+          install -d "$package_root/DEBIAN" "$package_root/opt/ayugram-desktop"
+          install -d "$package_root/usr/bin" "$package_root/usr/share/applications"
+          install -d "$package_root/usr/share/dbus-1/services" "$package_root/usr/share/metainfo"
+          install -d "$package_root/usr/share/doc/ayugram-desktop"
+          cp -a "$release_dir"/. "$package_root/opt/ayugram-desktop/"
+          chmod 0755 "$package_root/opt/ayugram-desktop/AyuGram"
+          for name in Updater Packer; do
+            if [ -f "$package_root/opt/ayugram-desktop/$name" ]; then
+              chmod 0755 "$package_root/opt/ayugram-desktop/$name"
+            fi
+          done
+          ln -s /opt/ayugram-desktop/AyuGram "$package_root/usr/bin/AyuGram"
+          ln -s /opt/ayugram-desktop/AyuGram "$package_root/usr/bin/ayugram-desktop"
+          install -m 0644 lib/xdg/com.ayugram.desktop.desktop "$package_root/usr/share/applications/"
+          sed 's|@CMAKE_INSTALL_FULL_BINDIR@|/usr/bin|g' lib/xdg/com.ayugram.desktop.service > "$package_root/usr/share/dbus-1/services/com.ayugram.desktop.service"
+          install -m 0644 lib/xdg/com.ayugram.desktop.metainfo.xml "$package_root/usr/share/metainfo/"
+          install -m 0644 LICENSE "$package_root/usr/share/doc/ayugram-desktop/copyright"
+          for size in 16 32 48 64 128 256 512; do
+            install -d "$package_root/usr/share/icons/hicolor/${size}x${size}/apps"
+            install -m 0644 "Telegram/Resources/art/icon${size}.png" \
+              "$package_root/usr/share/icons/hicolor/${size}x${size}/apps/com.ayugram.desktop.png"
+          done
+
+          shlibs_output="$(dpkg-shlibdeps -O --ignore-missing-info \
+            -l"$package_root/opt/ayugram-desktop" \
+            "$package_root/opt/ayugram-desktop/AyuGram")"
+          depends="$(printf '%s\n' "$shlibs_output" | sed -n 's/^shlibs:Depends=//p')"
+          if [ -z "$depends" ]; then
+            echo "dpkg-shlibdeps did not produce runtime dependencies" >&2
+            ldd "$package_root/opt/ayugram-desktop/AyuGram" || true
+            exit 1
+          fi
+
+          app_version="$(awk '$1 == "AppVersionStrSmall" {print $2}' Telegram/build/version)"
+          package_version="${app_version}+run${BUILD_RUN_ID}"
+          cat > "$package_root/DEBIAN/control" <<CONTROL
+          Package: ayugram-desktop
+          Version: ${package_version}
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Maintainer: shofukantkts <shofukantkts@users.noreply.github.com>
+          Depends: ${depends}
+          Description: AyuGram Desktop Telegram client
+           Desktop Telegram client with Ghost mode and customization.
+           Built from shofukantkts/AyuGramDesktop by GitHub Actions.
+          CONTROL
+          chmod 0644 "$package_root/DEBIAN/control"
+          install -d dist
+          dpkg-deb --build --root-owner-group "$package_root" \
+            "dist/ayugram-desktop_${package_version}_amd64.deb"
+          dpkg-deb --info "dist/ayugram-desktop_${package_version}_amd64.deb"
+          ldd "$package_root/opt/ayugram-desktop/AyuGram" | tee dist/runtime-libraries.txt
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AyuGram-DEB-${{ env.BUILD_SHA }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
