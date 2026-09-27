@@ -1,0 +1,38 @@
+name: Build Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: Build AyuGram for Linux x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Build with the upstream Linux build container
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/usr/src/tdesktop" \
+            --workdir /usr/src/tdesktop \
+            ghcr.io/telegramdesktop/tdesktop/centos_env:latest \
+            /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
+            -D TDESKTOP_API_ID=2040 \
+            -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627
+
+      - name: Upload Linux build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: AyuGram-Linux-${{ github.sha }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
