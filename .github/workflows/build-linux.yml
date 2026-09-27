@@ -18,7 +18,15 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Cache Protobuf dependency
+        id: protobuf-cache
+        uses: actions/cache@v4
+        with:
+          path: .deps/protobuf
+          key: protobuf-v30.2-rocky8-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Telegram/build/docker/centos_env/Dockerfile') }}
+
       - name: Build Protobuf needed by this source revision
+        if: steps.protobuf-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             --user "$(id -u):$(id -g)" \
