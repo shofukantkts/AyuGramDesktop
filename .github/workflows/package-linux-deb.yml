@@ -83,7 +83,20 @@ jobs:
               "$package_root/usr/share/icons/hicolor/${size}x${size}/apps/com.ayugram.desktop.png"
           done
 
-          shlibs_output="$(dpkg-shlibdeps -O --ignore-missing-info \
+          shlibdeps_root="$RUNNER_TEMP/shlibdeps-work"
+          install -d "$shlibdeps_root/debian"
+          cat > "$shlibdeps_root/debian/control" <<'CONTROL'
+          Source: ayugram-desktop
+          Section: net
+          Priority: optional
+          Maintainer: shofukantkts <shofukantkts@users.noreply.github.com>
+
+          Package: ayugram-desktop
+          Architecture: amd64
+          Description: AyuGram Desktop Telegram client
+           Desktop Telegram client with Ghost mode and customization.
+          CONTROL
+          shlibs_output="$(cd "$shlibdeps_root" && dpkg-shlibdeps -O --ignore-missing-info \
             -l"$package_root/opt/ayugram-desktop" \
             "$package_root/opt/ayugram-desktop/AyuGram")"
           depends="$(printf '%s\n' "$shlibs_output" | sed -n 's/^shlibs:Depends=//p')"
