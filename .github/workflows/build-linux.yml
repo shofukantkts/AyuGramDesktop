@@ -18,6 +18,29 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Build Protobuf needed by this source revision
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "${GITHUB_WORKSPACE}:/usr/src/tdesktop" \
+            --workdir /usr/src/tdesktop \
+            ghcr.io/telegramdesktop/tdesktop/centos_env:latest \
+            bash -lc '
+              set -euo pipefail
+              mkdir -p .deps
+              git clone --depth 1 --branch v30.2 https://github.com/protocolbuffers/protobuf.git .deps/protobuf-src
+              cmake -S .deps/protobuf-src -B .deps/protobuf-build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/usr/src/tdesktop/.deps/protobuf \
+                -Dprotobuf_BUILD_TESTS=OFF \
+                -Dprotobuf_BUILD_PROTOBUF_BINARIES=ON \
+                -Dprotobuf_BUILD_LIBPROTOC=ON \
+                -Dprotobuf_WITH_ZLIB=OFF
+              cmake --build .deps/protobuf-build --parallel 2
+              cmake --install .deps/protobuf-build
+              rm -rf .deps/protobuf-src .deps/protobuf-build
+            '
+
       - name: Build with the upstream Linux build container
         run: |
           docker run --rm \
@@ -27,7 +50,8 @@ jobs:
             ghcr.io/telegramdesktop/tdesktop/centos_env:latest \
             /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
             -D TDESKTOP_API_ID=2040 \
-            -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627
+            -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627 \
+            -D CMAKE_PREFIX_PATH=/usr/src/tdesktop/.deps/protobuf
 
       - name: Upload Linux build output
         uses: actions/upload-artifact@v4
